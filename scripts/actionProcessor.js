@@ -12,6 +12,22 @@ const RESET = '\x1b[0m'
  */
 
 /**
+ * @typedef {Object} ActionResult
+ * @property {boolean} success - Whether the action was successful
+ * @property {string} message - Message to be shown to user
+ * @property {Object} data - Additional data returned by the action
+ */
+
+/**
+ * @typedef {Object} ActionContext
+ * @property {string} userId - ID of the user who triggered the action
+ * @property {string} input - Original user input
+ * @property {Object} state - Current conversation state
+ * @property {OpenAI} client - OpenAI client instance
+ * @property {Array<{role: string, content: string}>} conversationHistory - Conversation history
+ */
+
+/**
  * @typedef {Object} BotResponse
  * @property {string} action - Name of the action to execute
  * @property {Object} params - Parameters for the action
@@ -23,7 +39,7 @@ const RESET = '\x1b[0m'
  * @param {string} config.name - Unique identifier for this action
  * @param {string} config.description - Description of what this action does
  * @param {string[]} config.examples - Example conversations showing when to use this action
- * @param {Function} config.execute - Function to execute the action with its params
+ * @param {(params: Object, context: ActionContext) => Promise<ActionResult>} config.execute - Function to execute the action with its params
  */
 function createAction(config) {
   const {
@@ -45,28 +61,25 @@ function createAction(config) {
  * Direct Reply Action
  * @type {Action}
  */
-export const directReplyAction = createAction({
+const directReplyAction = createAction({
   name: 'DIRECT_REPLY',
   description: 'Responds to user with natural language',
   examples: [
-    "User: What is Movement?\nBot: DIRECT_REPLY, {}",
-    "User: How are you?\nBot: DIRECT_REPLY, {}",
-    "User: Tell me about blockchain\nBot: DIRECT_REPLY, {}"
+    `User: What is Movement?\nBot: DIRECT_REPLY; {}`,
+    `User: How are you?\nBot: DIRECT_REPLY; {}`,
+    `User: Tell me about blockchain\nBot: DIRECT_REPLY; {}`
   ],
   execute: async (params, context) => {
     // For direct reply, we need another call to OpenAI to get the actual response
     const completion = await context.client.chat.completions.create({
-      messages: [
-        { role: 'system', content: 'You are GMoveBot...' },
-        { role: 'user', content: context.input }
-      ],
+      messages: context.conversationHistory,
       model: 'gpt-4'
     });
-
+    const response = completion.choices[0].message.content;
     return {
       success: true,
-      message: completion.choices[0].message.content,
-      data: null
+      message: response,
+      data: null,
     };
   }
 })
@@ -75,13 +88,13 @@ export const directReplyAction = createAction({
  * Fetch Price Action
  * @type {Action}
  */
-export const fetchPriceAction = createAction({
+const fetchPriceAction = createAction({
   name: 'FETCH_PRICE',
   description: 'Fetches cryptocurrency price data',
   examples: [
-    "User: What's BTC price?\nBot: FETCH_PRICE, {chainId: 1, pair: 'BTC/USDT'}",
-    "User: Show ETH price\nBot: FETCH_PRICE, {chainId: 1, pair: 'ETH/USDT'}",
-    "User: MOVE token price?\nBot: FETCH_PRICE, {chainId: 1, pair: 'MOVE/USDT'}"
+    `User: What's BTC price?\nBot: FETCH_PRICE; {"chainId": 1, "pair": "BTC/USDT"}`,
+    `User: Show ETH price\nBot: FETCH_PRICE; {"chainId": 1, "pair": "ETH/USDT"}`,
+    `User: MOVE token price?\nBot: FETCH_PRICE; {"chainId": 1, "pair": "MOVE/USDT"}`
   ],
   execute: async (params, context) => {
     try {
@@ -105,13 +118,13 @@ export const fetchPriceAction = createAction({
  * Trade Action
  * @type {Action}
  */
-export const tradeAction = createAction({
+const tradeAction = createAction({
   name: 'TRADE',
   description: 'Executes trading operations',
   examples: [
-    "User: Buy 5000000 worth of BTC\nBot: TRADE, {function: 'buy', pair: 'BTC/USDT', amount: 5000000}",
-    "User: Sell my ETH\nBot: TRADE, {function: 'sell', pair: 'ETH/USDT', amount: -1}",
-    "User: I want to purchase MOVE\nBot: TRADE, {function: 'buy', pair: 'MOVE/USDT', amount: null}"
+    `User: Buy 5000000 worth of BTC\nBot: TRADE; {"function": "buy", "pair": "BTC/USDT", "amount": 5000000}`,
+    `User: Sell my ETH\nBot: TRADE; {"function": "sell", "pair": "ETH/USDT", "amount": -1}`,
+    `User: I want to purchase MOVE\nBot: TRADE; {"function": "buy", "pair": "MOVE/USDT", "amount": null}`
   ],
   execute: async (params, context) => {
     try {
@@ -132,7 +145,7 @@ export const tradeAction = createAction({
 })
 
 
-export class ActionProcessor {
+class ActionProcessor {
 
   /**
    * @param {OpenAI} openaiClient - OpenAI client instance
@@ -150,23 +163,22 @@ export class ActionProcessor {
     this.conversationHistory.push(
       {
         role: 'system',
-        content: `Now you are an action selector for GMoveBot. Based on user input, respond with an action and parameters in the format: ACTION, {params}. Available actions:
+        content: `Now you are an action selector for GMoveBot. Based on user input, respond with an action and parameters in the format: ACTION; {params}. Available actions:
         ${this.actions.map(a => `${a.name}: ${a.description}\nExamples:\n${a.examples.join('\n')}`).join('\n\n')}`
       },
     )
-    this.conversationHistory.push(
-      {
-        role: 'user',
-        content: userInput
-      }
-    )
-
     const completion = await this.openaiClient.chat.completions.create({
       messages: this.conversationHistory,
       model: 'gpt-4'
     });
 
     const response = completion.choices[0].message.content;
+    this.conversationHistory.push(
+      {
+        role: 'assistant',
+        content: response
+      }
+    )
     return this.parseResponse(response);
   }
 
@@ -176,22 +188,29 @@ export class ActionProcessor {
    * @returns {{action: string, params: Object}} - The action and parameters
    */
   parseResponse(response) {
-    // Parse "ACTION, {params}" format into { action, params }
-    const [action, paramsStr] = response.split(',', 2);
+    // Parse `ACTION, {params}` format into { action, params }
+    console.log(response)
+    const [action, paramsStr] = response.split(';', 2);
+    console.log(action, paramsStr)
     const params = JSON.parse(paramsStr.trim());
     return { action: action.trim(), params };
   }
 
+  /**
+   * Processes the selected action
+   * @param {BotResponse} botResponse - The selected action and its parameters
+   * @param {ActionContext} context - The context for the action
+   * @returns {Promise<ActionResult>} - The result of the action
+   */
   async processAction(botResponse, context) {
     const action = this.actions.find(a => a.name === botResponse.action);
     if (!action) {
       return {
         success: false,
         message: `Unknown action: ${botResponse.action}`,
-        data: null
+        data: null,
       };
     }
-
     return await action.execute(botResponse.params, context);
   }
 
@@ -211,11 +230,19 @@ export class ActionProcessor {
 
     // Step 2: Process the selected action
     const result = await this.processAction(botResponse, context);
+    this.conversationHistory.push({
+      role: 'assistant',
+      content: result.message
+    })
+    console.log(this.conversationHistory)
 
     return result;
   }
 }
 
 module.exports = {
-  ActionProcessor
+  ActionProcessor,
+  directReplyAction,
+  fetchPriceAction,
+  tradeAction,
 };

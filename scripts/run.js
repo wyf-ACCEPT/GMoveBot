@@ -65,9 +65,6 @@ function askQuestion() {
 
       // Process user input through ActionProcessor
       const result = await processor.handleUserInput(input)
-      
-      // Add bot response to history
-      conversationHistory.push({ role: 'assistant', content: result.message })
 
       // Display bot's response
       console.log('\nGMoveBot:', result.message)
