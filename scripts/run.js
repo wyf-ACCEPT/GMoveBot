@@ -1,5 +1,8 @@
-const { OpenAI } = require('openai')
+/** @typedef {import('./actionProcessor').Action} Action */
+
 const readline = require('readline')
+const { OpenAI } = require('openai')
+const { ActionProcessor, directReplyAction, fetchPriceAction, tradeAction } = require('./actionProcessor')
 require('dotenv').config()
 
 // Initialize readline interface for command line interaction
@@ -8,11 +11,14 @@ const rl = readline.createInterface({
   output: process.stdout
 })
 
-const client = new OpenAI({
+// Initialize OpenAI client
+const openaiClient = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-// Store conversation history
+/**
+ * @type {{role: string, content: string}[]}
+ */
 let conversationHistory = [
   {
     role: 'system',
@@ -33,9 +39,21 @@ let conversationHistory = [
   }
 ]
 
+/**
+ * @type {Action[]}
+ */
+let actions = [
+  directReplyAction,
+  fetchPriceAction,
+  tradeAction,
+]
+
+// Initialize ActionProcessor with conversation history
+const processor = new ActionProcessor(openaiClient, actions, conversationHistory)
+
 // Function to get user input
 function askQuestion() {
-  rl.question('You: ', async (input) => {
+  rl.question('\nYou: ', async (input) => {
     if (input.toLowerCase() === 'exit') {
       rl.close()
       return
@@ -45,26 +63,26 @@ function askQuestion() {
       // Add user message to history
       conversationHistory.push({ role: 'user', content: input })
 
-      // Call OpenAI API
-      const completion = await client.chat.completions.create({
-        messages: conversationHistory,
-        model: 'gpt-4o',
-      })
-
-      // Get bot's response
-      const response = completion.choices[0].message.content
-
+      // Process user input through ActionProcessor
+      const result = await processor.handleUserInput(input)
+      
       // Add bot response to history
-      conversationHistory.push({ role: 'assistant', content: response })
+      conversationHistory.push({ role: 'assistant', content: result.message })
 
       // Display bot's response
-      console.log('GMoveBot:', response)
-      console.log()
+      console.log('\nGMoveBot:', result.message)
+      
+      // If there's additional data, display it
+      if (result.data) {
+        console.log('\nAdditional data:', result.data)
+      }
+      
+      console.log() // Empty line for better readability
 
       // Continue the conversation
       askQuestion()
     } catch (error) {
-      console.error('Error:', error.message)
+      console.error('\nError:', error.message)
       askQuestion()
     }
   })
