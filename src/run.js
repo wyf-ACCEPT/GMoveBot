@@ -1,8 +1,8 @@
-/** @typedef {import('./actionProcessor').Action} Action */
+/** @typedef {import('./processor').Action} Action */
 
 const readline = require('readline')
 const { OpenAI } = require('openai')
-const { ActionProcessor, directReplyAction, fetchPriceAction, tradeAction } = require('./actionProcessor')
+const { ActionProcessor, directReplyAction, fetchPriceAction, tradeAction } = require('./processor')
 require('dotenv').config()
 
 // Initialize readline interface for command line interaction
