@@ -77,8 +77,6 @@ function askQuestion(): void {
         console.log('\nAdditional data:', result.data);
       }
       
-      console.log(); // Empty line for better readability
-
       // Continue the conversation
       askQuestion();
     } catch (error) {
